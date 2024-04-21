@@ -10,7 +10,6 @@
   tasks:
     - name: Restore DB from snapshot
       local_action:
-        ansible_python_interpreter: /usr/bin/python3
         module: rds
         command: restore
         snapshot: '{{ db_snapshot }}'
@@ -19,10 +18,8 @@
         wait: yes
         instance_type: db.t2.small
         wait_timeout: 1200
-
     - name: Modify to add SG
       local_action:
-        ansible_python_interpreter: /usr/bin/python3
         module: rds
         command: modify
         instance_name: '{{ instance_id }}'

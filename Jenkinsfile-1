@@ -58,7 +58,7 @@ stage ('Build Docker Image') {
 
 stage ('Restore CliXX Database') {
           steps {
-              withCredentials([string(credentialsId: 'secret_key', variable: 'SECRET_KEY_VAR'),string(credentialsId: 'access_key', variable: 'ACCESS_KEY_VAR')]){
+              withCredentials([string(credentialsId: 'DB_USER_NAME', variable: 'DB_USER_NAME'), string(credentialsId: 'DB_PASSWORD', variable: 'DB_PASSWORD'), string(credentialsId: 'DB_NAME', variable: 'DB_NAME'), string(credentialsId: 'SERVER_INSTANCE', variable: 'SERVER_INSTANCE')]){
               sh '''
             pip3 install boto3 botocore boto
             ansible-playbook -i localhost $WORKSPACE/deploy_db_ansible/deploy_db.yml --extra-vars "access_key=${ACCESS_KEY_VAR} secret_key=${SECRET_KEY_VAR}"
@@ -77,7 +77,7 @@ stage ('Restore CliXX Database') {
                PASSWORD='W3lcome123'
                DBNAME='wordpressdb'
                SERVER_IP=`curl http://169.254.169.254/latest/meta-data/public-ipv4`
-               SERVER_INSTANCE='wordpressdbclixxjenkins.cd7numzl1xfe.us-east-1.rds.amazonaws.com'
+               SERVER_INSTANCE='wordpressdbclixx-ecs.c5ciugoe6l53.us-east-1.rds.amazonaws.com'
                echo "use wordpressdb;" >> ./db.setup
                echo "UPDATE wp_options SET option_value = '$SERVER_IP' WHERE option_value LIKE 'http%'; " >> ./db.setup
                mysql -u $USERNAME --password=$PASSWORD -h $SERVER_INSTANCE  -D  $DBNAME < ./db.setup

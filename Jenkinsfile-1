@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         VERSION = "1.0.${BUILD_NUMBER}"
-        PATH = "${PATH}:${getSonarPath()}"
+        PATH = "${PATH}:${getSonarPath()}:${getDockerPath()}"
     }
 
     stages {
@@ -14,24 +14,24 @@ pipeline {
         }
         withCredentials([string(credentialsId: 'SONAR_TOKEN', variable: 'SONAR_TOKEN')]){
         withSonarQubeEnv('SonarQubeScanner') {
-        sh " ${scannerHome}/bin/sonar-scanner \
-        -Dsonar.projectKey=CliXX-App-Eliane \
-        -Dsonar.login=${SONAR_TOKEN} "
-      }
-    }
-  }
+          sh " ${scannerHome}/bin/sonar-scanner \
+          -Dsonar.projectKey=CliXX-App-Mike   \
+          -Dsonar.login=${SONAR_TOKEN} "
+        }
+        }
+        }
 
 }
 
-//  stage('Quality Gate') {
-//             steps {
-//                 timeout(time: 3, unit: 'MINUTES') {
-//                     waitForQualityGate abortPipeline: true
-//             }
-//             }
-//         }
+ stage('Quality Gate') {
+            steps {
+                timeout(time: 3, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+            }
+            }
+        }
 
-  stage ('Build Docker Image') {
+          stage ('Build Docker Image') {
           steps {
             // script{
             //  dockerHome= tool 'docker-inst'
@@ -44,52 +44,51 @@ pipeline {
   stage ('Starting Docker Image') {
           steps {
               sh '''
-              if ( docker ps|grep clixx-conti ) then
+              if ( docker ps|grep clixx-cont ) then
                  echo "Docker image exists, killing it"
-                 docker stop clixx-conti
-                 docker rm clixx-conti
-                 docker run --name clixx-conti  -p 80:80 -d clixx-image:$VERSION
+                 docker stop clixx-cont
+                 docker rm clixx-cont
+                 docker run --name clixx-cont  -p 80:80 -d clixx-image:$VERSION
               else
-                 docker run --name clixx-conti  -p 80:80 -d clixx-image:$VERSION 
+                 docker run --name clixx-cont  -p 80:80 -d clixx-image:$VERSION 
               fi
               '''
-
           }
         }
 
   stage ('Restore CliXX Database') {
           steps {
-              withCredentials([string(credentialsId: 'secret_key', variable: 'SECRET_KEY_VAR'),string(credentialsId: 'access_key', variable: 'ACCESS_KEY_VAR')]){
               sh '''
+            python3 -m venv python3-virtualenv
+            source python3-virtualenv/bin/activate
+            python3 --version
             pip3 install boto3 botocore boto
-            ansible-playbook -i localhost $WORKSPACE/deploy_db_ansible/deploy_db.yml --extra-vars "access_key=${ACCESS_KEY_VAR} secret_key=${SECRET_KEY_VAR}"
+            ansible-playbook $WORKSPACE/deploy_db_ansible/deploy_db.yml -i localhost
+            deactivate
+
               '''
-          }
           }
         }
 
   stage ('Configure DB Instance') {
           steps {
               withCredentials([string(credentialsId: 'DB_USER_NAME', variable: 'DB_USER_NAME'), string(credentialsId: 'DB_PASSWORD', variable: 'DB_PASSWORD'), string(credentialsId: 'DB_NAME', variable: 'DB_NAME'), string(credentialsId: 'SERVER_INSTANCE', variable: 'SERVER_INSTANCE')]){
-																																																				 
-			  
               sh '''
                USERNAME=${DB_USER_NAME}
                PASSWORD=${DB_PASSWORD}
                DBNAME=${DB_NAME}
-               TOKEN=`curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"`
-               SERVER_IP=`curl -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4`
+               SERVER_IP=$(curl -s http://checkip.dyndns.org | sed -e 's/.*Current IP Address: //' -e 's/<.*$//')
                SERVER_INSTANCE=${SERVER_INSTANCE}
                echo "use wordpressdb;" >> $WORKSPACE/db.setup
-               echo "UPDATE wp_options SET option_value = '$SERVER_IP' WHERE option_value LIKE 'NLB%';">> $WORKSPACE/db.setup
+               echo "UPDATE wp_options SET option_value = '$SERVER_IP' WHERE option_value LIKE 'http%';">> $WORKSPACE/db.setup
                mysql -u $USERNAME --password=$PASSWORD -h $SERVER_INSTANCE  -D  $DBNAME < $WORKSPACE/db.setup
 
               '''
               }
           }
-  }
+        }
 
-   stage ('Tear Down CliXX Docker Image and Database') {
+      stage ('Tear Down CliXX Docker Image and Database') {
           steps {
              script {
                 def userInput = input(id: 'confirm', message: 'Tear Down Environment?', parameters: [ [$class: 'BooleanParameterDefinition', defaultValue: false, description: 'Tear Down Environment?', name: 'confirm'] ])
@@ -101,35 +100,30 @@ pipeline {
             pip3 install boto3 botocore boto
             ansible-playbook $WORKSPACE/deploy_db_ansible/delete_db.yml
             deactivate
-            docker stop clixx-conti
-            docker rm  clixx-conti
+            docker stop clixx-cont
+            docker rm  clixx-cont
 
               '''
           }
         }
 
-
-    stage ('Log Into ECR and push the newly created Docker') {
+        stage ('Log Into ECR and push the newly created Docker') {
           steps {
              script {
                 def userInput = input(id: 'confirm', message: 'Push Image To ECR?', parameters: [ [$class: 'BooleanParameterDefinition', defaultValue: false, description: 'Push to ECR?', name: 'confirm'] ])
              }
               withCredentials([string(credentialsId: 'ECR_USERNAME', variable: 'ECR_USERNAME'), string(credentialsId: 'ECR_REPO', variable: 'ECR_REPO'), ]){
               sh '''
-                aws ecr get-login-password --region us-east-1 | docker login --username ${ECR_USERNAME} --password-stdin 654654494607.dkr.ecr.us-east-1.amazonaws.com/clixx-repository
-                docker tag clixx-image:$VERSION 654654494607.dkr.ecr.us-east-1.amazonaws.com/clixx-repository:clixx-image-$VERSION
-                docker tag clixx-image:$VERSION 654654494607.dkr.ecr.us-east-1.amazonaws.com/clixx-repository:latest
-                docker push 654654494607.dkr.ecr.us-east-1.amazonaws.com/clixx-repository:clixx-image-$VERSION
-                docker push 654654494607.dkr.ecr.us-east-1.amazonaws.com/clixx-repository:latest
+                aws ecr get-login-password --region us-east-1 | docker login --username ${ECR_USERNAME} --password-stdin ${ECR_REPO}
+                docker tag clixx-image:$VERSION ${ECR_REPO}:clixx-image-$VERSION
+                docker tag clixx-image:$VERSION ${ECR_REPO}:latest
+                docker push ${ECR_REPO}:clixx-image-$VERSION
+                docker push ${ECR_REPO}:latest
               '''
+          }
           }
         }
     }
- }
-
-
-
-	 
 }
 
 def getSonarPath(){
@@ -140,4 +134,4 @@ def getDockerPath(){
         def DockerHome= tool name: 'docker-inst', type: 'dockerTool'
         return DockerHome
     }
-	
+    
